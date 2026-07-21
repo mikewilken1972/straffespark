@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;900&display=swap');
+
+@theme {
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+}
+
+.pitch-gradient {
+  background: radial-gradient(circle at bottom, #22c55e 0%, #15803d 100%);
+}
+
+.goal-net {
+  background-image: 
+    linear-gradient(rgba(255,255,255,0.2) 1px, transparent 1px), 
+    linear-gradient(90deg, rgba(255,255,255,0.2) 1px, transparent 1px);
+  background-size: 15px 15px;
+}
+
+.grass-pattern {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255,255,255,0.03),
+    rgba(255,255,255,0.03) 40px,
+    rgba(0,0,0,0.03) 40px,
+    rgba(0,0,0,0.03) 80px
+  );
+}

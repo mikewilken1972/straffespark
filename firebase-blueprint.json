@@ -1,0 +1,29 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Game Room",
+      "description": "Stores state for a penalty shootout game",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "pattern": "^[0-9]{4}$" },
+        "players": { "type": "array" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "currentRound": { "type": "integer" },
+        "kickerId": { "type": "string" },
+        "keeperId": { "type": "string" },
+        "kickerChoice": { "type": "string" },
+        "keeperChoice": { "type": "string" },
+        "scores": { "type": "object" },
+        "history": { "type": "array" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "players", "status"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Main game state"
+    }
+  }
+}
