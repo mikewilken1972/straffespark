@@ -29,3 +29,5 @@ jobs:
           server-dir: ./straffespark/
           protocol: ftp
           dangerous-clean-slate: false
+          state-name: .ftp-deploy-sync-state.json
+          log-level: verbose

@@ -503,7 +503,13 @@ export default function App() {
           <div className="flex space-x-1.5">
             {[0, 1, 2, 3, 4].map((i) => {
               const p1Shots = (room.history || []).filter(h => h.kickerId === room.players[0]);
-              const result = p1Shots[i];
+              let result = p1Shots[i];
+              
+              // Preview current shot result in sync with scoreboard
+              if (!result && showGoalText && lastRoundResult?.kickerId === room.players[0] && i === p1Shots.length) {
+                result = lastRoundResult;
+              }
+
               return (
                 <div 
                   key={i} 
@@ -522,7 +528,13 @@ export default function App() {
           <div className="flex space-x-1.5">
             {[0, 1, 2, 3, 4].map((i) => {
               const p2Shots = (room.history || []).filter(h => h.kickerId === room.players[1]);
-              const result = p2Shots[i];
+              let result = p2Shots[i];
+              
+              // Preview current shot result in sync with scoreboard
+              if (!result && showGoalText && lastRoundResult?.kickerId === room.players[1] && i === p2Shots.length) {
+                result = lastRoundResult;
+              }
+
               return (
                 <div 
                   key={i} 
