@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   doc, 
   onSnapshot, 
@@ -31,30 +31,39 @@ export default function App() {
   const [showResult, setShowResult] = useState(false);
   const [lastRoundResult, setLastRoundResult] = useState<RoundResult | null>(null);
   const [isCpuThinking, setIsCpuThinking] = useState(false);
+  const cpuThinkingRef = useRef(false);
 
   useEffect(() => {
-    if (!room?.id || !room.isSinglePlayer || room.status !== 'playing' || showResult || isCpuThinking) return;
+    if (!room?.id || !room.isSinglePlayer || room.status !== 'playing' || showResult || cpuThinkingRef.current) return;
 
     const isCpuTurn = (room.kickerId === 'CPU' && room.kickerChoice === null) || 
                       (room.keeperId === 'CPU' && room.keeperChoice === null);
 
     if (isCpuTurn) {
+      cpuThinkingRef.current = true;
       setIsCpuThinking(true);
+      
       const timer = setTimeout(async () => {
-        const choices: Choice[] = ['left', 'center', 'right'];
-        const randomChoice = choices[Math.floor(Math.random() * choices.length)];
-        const field = room.kickerId === 'CPU' ? 'kickerChoice' : 'keeperChoice';
+        try {
+          const choices: Choice[] = ['left', 'center', 'right'];
+          const randomChoice = choices[Math.floor(Math.random() * choices.length)];
+          const field = room.kickerId === 'CPU' ? 'kickerChoice' : 'keeperChoice';
 
-        const roomRef = doc(db, 'rooms', room.id);
-        await updateDoc(roomRef, {
-          [field]: randomChoice,
-          lastUpdated: serverTimestamp(),
-        });
-        setIsCpuThinking(false);
-      }, 800);
+          const roomRef = doc(db, 'rooms', room.id);
+          await updateDoc(roomRef, {
+            [field]: randomChoice,
+            lastUpdated: serverTimestamp(),
+          });
+        } catch (err) {
+          console.error("CPU choice failed", err);
+        } finally {
+          setIsCpuThinking(false);
+          cpuThinkingRef.current = false;
+        }
+      }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [room?.status, room?.kickerChoice, room?.keeperChoice, room?.kickerId, room?.keeperId, room?.isSinglePlayer, showResult, isCpuThinking]);
+  }, [room?.status, room?.kickerChoice, room?.keeperChoice, room?.kickerId, room?.keeperId, room?.isSinglePlayer, showResult]);
 
   useEffect(() => {
     const init = async () => {
@@ -90,9 +99,11 @@ export default function App() {
     if (room && room.status === 'playing' && room.kickerChoice && room.keeperChoice && !showResult) {
       resolveRound(room);
     }
-  }, [room?.kickerChoice, room?.keeperChoice, room?.status, showResult]);
+  }, [room?.kickerChoice, room?.keeperChoice, room?.status, showResult, playerId]);
 
   const resolveRound = async (currentRoom: GameRoom) => {
+    if (showResult) return;
+    
     // Both players see the same calculation
     const isGoal = currentRoom.kickerChoice !== currentRoom.keeperChoice;
     const isSaved = currentRoom.kickerChoice === currentRoom.keeperChoice;
@@ -116,33 +127,37 @@ export default function App() {
       // Logic for moving to next round
       // In single player, human handles all transitions. In multiplayer, kicker handles it.
       const shouldHandleTransition = currentRoom.isSinglePlayer 
-        ? playerId !== 'CPU' 
-        : playerId === currentRoom.kickerId;
+        ? (playerId && playerId !== 'CPU')
+        : (playerId && playerId === currentRoom.kickerId);
 
       if (shouldHandleTransition) {
-        const newScores = { ...currentRoom.scores };
-        if (isGoal) {
-          newScores[currentRoom.kickerId] = (newScores[currentRoom.kickerId] || 0) + 1;
+        try {
+          const newScores = { ...currentRoom.scores };
+          if (isGoal) {
+            newScores[currentRoom.kickerId] = (newScores[currentRoom.kickerId] || 0) + 1;
+          }
+
+          const isGameOver = currentRoom.currentRound >= 10;
+          const nextRound = currentRoom.currentRound + 1;
+          
+          // Swap roles
+          const nextKicker = currentRoom.keeperId;
+          const nextKeeper = currentRoom.kickerId;
+
+          await updateDoc(doc(db, 'rooms', currentRoom.id), {
+            currentRound: nextRound,
+            kickerId: nextKicker,
+            keeperId: nextKeeper,
+            kickerChoice: null,
+            keeperChoice: null,
+            scores: newScores,
+            status: isGameOver ? 'finished' : 'playing',
+            history: [...(currentRoom.history || []), result],
+            lastUpdated: serverTimestamp(),
+          });
+        } catch (err) {
+          console.error("Transition failed", err);
         }
-
-        const isGameOver = currentRoom.currentRound >= 10;
-        const nextRound = currentRoom.currentRound + 1;
-        
-        // Swap roles
-        const nextKicker = currentRoom.keeperId;
-        const nextKeeper = currentRoom.kickerId;
-
-        await updateDoc(doc(db, 'rooms', currentRoom.id), {
-          currentRound: nextRound,
-          kickerId: nextKicker,
-          keeperId: nextKeeper,
-          kickerChoice: null,
-          keeperChoice: null,
-          scores: newScores,
-          status: isGameOver ? 'finished' : 'playing',
-          history: [...(currentRoom.history || []), result],
-          lastUpdated: serverTimestamp(),
-        });
       }
       
       setShowResult(false);
