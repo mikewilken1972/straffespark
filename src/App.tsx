@@ -29,6 +29,7 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showResult, setShowResult] = useState(false);
+  const [showGoalText, setShowGoalText] = useState(false);
   const [lastRoundResult, setLastRoundResult] = useState<RoundResult | null>(null);
   const [isCpuThinking, setIsCpuThinking] = useState(false);
   const cpuThinkingRef = useRef(false);
@@ -56,12 +57,19 @@ export default function App() {
           });
         } catch (err) {
           console.error("CPU choice failed", err);
+          cpuThinkingRef.current = false;
+          setIsCpuThinking(false);
         } finally {
           setIsCpuThinking(false);
           cpuThinkingRef.current = false;
         }
       }, 1000);
-      return () => clearTimeout(timer);
+
+      return () => {
+        clearTimeout(timer);
+        cpuThinkingRef.current = false;
+        setIsCpuThinking(false);
+      };
     }
   }, [room?.status, room?.kickerChoice, room?.keeperChoice, room?.kickerId, room?.keeperId, room?.isSinglePlayer, showResult]);
 
@@ -96,72 +104,87 @@ export default function App() {
 
   // Separate effect to handle round resolution when both choices are present
   useEffect(() => {
-    if (room && room.status === 'playing' && room.kickerChoice && room.keeperChoice && !showResult) {
+    if (room && room.status === 'playing' && room.kickerChoice && room.keeperChoice && !showResult && !isCpuThinking) {
       resolveRound(room);
     }
-  }, [room?.kickerChoice, room?.keeperChoice, room?.status, showResult, playerId]);
+  }, [room?.kickerChoice, room?.keeperChoice, room?.status, showResult, isCpuThinking]);
+
+  // Clear result view only once the database has been cleared
+  useEffect(() => {
+    if (room && showResult && !room.kickerChoice && !room.keeperChoice) {
+      setShowResult(false);
+      setShowGoalText(false);
+      setLastRoundResult(null);
+    }
+  }, [room?.kickerChoice, room?.keeperChoice, showResult]);
 
   const resolveRound = async (currentRoom: GameRoom) => {
     if (showResult) return;
     
-    // Both players see the same calculation
-    const isGoal = currentRoom.kickerChoice !== currentRoom.keeperChoice;
-    const isSaved = currentRoom.kickerChoice === currentRoom.keeperChoice;
-    
-    const result: RoundResult = {
-      round: currentRoom.currentRound,
-      kickerId: currentRoom.kickerId,
-      keeperId: currentRoom.keeperId,
-      kickerChoice: currentRoom.kickerChoice,
-      keeperChoice: currentRoom.keeperChoice,
-      isGoal,
-      isSaved,
-      isMissed: false,
-    };
-
-    setLastRoundResult(result);
-    setShowResult(true);
-
-    // Wait for players to see the result before moving to next round
+    // 1. Initial delay so players see their choices are locked
     setTimeout(async () => {
-      // Logic for moving to next round
-      // In single player, human handles all transitions. In multiplayer, kicker handles it.
-      const shouldHandleTransition = currentRoom.isSinglePlayer 
-        ? (playerId && playerId !== 'CPU')
-        : (playerId && playerId === currentRoom.kickerId);
-
-      if (shouldHandleTransition) {
-        try {
-          const newScores = { ...currentRoom.scores };
-          if (isGoal) {
-            newScores[currentRoom.kickerId] = (newScores[currentRoom.kickerId] || 0) + 1;
-          }
-
-          const isGameOver = currentRoom.currentRound >= 10;
-          const nextRound = currentRoom.currentRound + 1;
-          
-          // Swap roles
-          const nextKicker = currentRoom.keeperId;
-          const nextKeeper = currentRoom.kickerId;
-
-          await updateDoc(doc(db, 'rooms', currentRoom.id), {
-            currentRound: nextRound,
-            kickerId: nextKicker,
-            keeperId: nextKeeper,
-            kickerChoice: null,
-            keeperChoice: null,
-            scores: newScores,
-            status: isGameOver ? 'finished' : 'playing',
-            history: [...(currentRoom.history || []), result],
-            lastUpdated: serverTimestamp(),
-          });
-        } catch (err) {
-          console.error("Transition failed", err);
-        }
-      }
+      // 2. Both players see the same calculation
+      const isGoal = currentRoom.kickerChoice !== currentRoom.keeperChoice;
+      const isSaved = currentRoom.kickerChoice === currentRoom.keeperChoice;
       
-      setShowResult(false);
-    }, 3000);
+      const result: RoundResult = {
+        round: currentRoom.currentRound,
+        kickerId: currentRoom.kickerId,
+        keeperId: currentRoom.keeperId,
+        kickerChoice: currentRoom.kickerChoice,
+        keeperChoice: currentRoom.keeperChoice,
+        isGoal,
+        isSaved,
+        isMissed: false,
+      };
+
+      setLastRoundResult(result);
+      // 3. Start ball animation
+      setShowResult(true);
+
+      // 4. Show the goal text after the ball travel animation (approx 0.6s)
+      setTimeout(() => {
+        setShowGoalText(true);
+      }, 600);
+
+      // 5. Wait for players to see the result before moving to next round
+      setTimeout(async () => {
+        // Logic for moving to next round
+        const shouldHandleTransition = currentRoom.isSinglePlayer 
+          ? (playerId && playerId !== 'CPU')
+          : (playerId && playerId === currentRoom.kickerId);
+
+        if (shouldHandleTransition) {
+          try {
+            const newScores = { ...currentRoom.scores };
+            if (isGoal) {
+              newScores[currentRoom.kickerId] = (newScores[currentRoom.kickerId] || 0) + 1;
+            }
+
+            const isGameOver = currentRoom.currentRound >= 10;
+            const nextRound = currentRoom.currentRound + 1;
+            
+            // Swap roles
+            const nextKicker = currentRoom.keeperId;
+            const nextKeeper = currentRoom.kickerId;
+
+            await updateDoc(doc(db, 'rooms', currentRoom.id), {
+              currentRound: nextRound,
+              kickerId: nextKicker,
+              keeperId: nextKeeper,
+              kickerChoice: null,
+              keeperChoice: null,
+              scores: newScores,
+              status: isGameOver ? 'finished' : 'playing',
+              history: [...(currentRoom.history || []), result],
+              lastUpdated: serverTimestamp(),
+            });
+          } catch (err) {
+            console.error("Transition failed", err);
+          }
+        }
+      }, 2800);
+    }, 1200);
   };
 
   const createRoom = async (isSingle = false) => {
@@ -403,6 +426,17 @@ export default function App() {
   const myChoice = isKicker ? room.kickerChoice : room.keeperChoice;
   const opponentName = room.playerNames[isKicker ? room.keeperId : room.kickerId];
 
+  // Derived scores for immediate feedback while showing result
+  const displayScores = { ...room.scores };
+  if (showGoalText && lastRoundResult?.isGoal) {
+    displayScores[lastRoundResult.kickerId] = (displayScores[lastRoundResult.kickerId] || 0) + 1;
+  }
+
+  const getMissedShots = (playerId: string) => {
+    return (room.history || []).filter(h => h.kickerId === playerId && !h.isGoal).length + 
+           (showGoalText && lastRoundResult?.kickerId === playerId && !lastRoundResult.isGoal ? 1 : 0);
+  };
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-zinc-900 flex flex-col overflow-hidden relative font-sans">
       {/* Pitch Gradient Layer */}
@@ -417,30 +451,89 @@ export default function App() {
         
         <div className="w-full max-w-md flex justify-between items-center bg-white rounded-[32px] p-6 shadow-2xl border-b-8 border-zinc-200">
           <div className="flex flex-col items-center w-1/3">
-            <div className="w-14 h-14 bg-emerald-500 rounded-2xl flex items-center justify-center text-2xl font-black text-white shadow-xl shadow-emerald-200/50 border-b-4 border-emerald-700">
+            <span className={`text-[8px] font-black ${room.players[0] === room.kickerId ? 'bg-rose-500 shadow-sm shadow-rose-200' : 'bg-zinc-800'} text-white px-2 py-0.5 rounded-full uppercase mb-1.5 tracking-[0.1em] transition-colors duration-300`}>
+              {room.players[0] === room.kickerId ? 'Skyder' : 'Målmand'}
+            </span>
+            <div className={`w-14 h-14 ${room.players[0] === room.kickerId ? 'bg-emerald-500 border-emerald-700 shadow-emerald-200/50' : 'bg-amber-400 border-amber-600 shadow-amber-200/50'} rounded-2xl flex items-center justify-center text-2xl font-black text-white shadow-xl border-b-4 transition-colors duration-300 relative`}>
               {room.playerNames[room.players[0]]?.substring(0, 2).toUpperCase() || 'P1'}
+              <div className="absolute -top-1 -right-1 bg-white rounded-full w-6 h-6 flex items-center justify-center shadow-md border border-zinc-100 text-xs">
+                {room.players[0] === room.kickerId ? '⚽' : '🧤'}
+              </div>
             </div>
             <span className="text-[10px] font-black mt-2 text-zinc-400 uppercase tracking-widest truncate max-w-full">
               {room.playerNames[room.players[0]]}
             </span>
+            <div className="flex items-center mt-1 space-x-1">
+               <span className="text-[8px] font-bold text-rose-500/60 uppercase">Miss:</span>
+               <span className="text-[10px] font-black text-rose-500">{getMissedShots(room.players[0])}</span>
+            </div>
           </div>
 
           <div className="flex flex-col items-center">
             <div className="text-5xl font-black text-zinc-900 tracking-tighter italic">
-              {room.scores[room.players[0]] || 0} — {room.scores[room.players[1]] || 0}
+              {displayScores[room.players[0]] || 0} — {displayScores[room.players[1]] || 0}
             </div>
             <div className="text-[10px] font-black text-rose-500 bg-rose-50 px-4 py-1 rounded-full uppercase tracking-widest mt-2 border border-rose-100">
-              Runde {Math.ceil(room.currentRound / 2)}/5
+              Runde {Math.min(5, Math.ceil(room.currentRound / 2))}/5
             </div>
           </div>
 
           <div className="flex flex-col items-center w-1/3">
-            <div className="w-14 h-14 bg-amber-400 rounded-2xl flex items-center justify-center text-2xl font-black text-white shadow-xl shadow-amber-200/50 border-b-4 border-amber-600">
+            <span className={`text-[8px] font-black ${room.players[1] === room.kickerId ? 'bg-rose-500 shadow-sm shadow-rose-200' : 'bg-zinc-800'} text-white px-2 py-0.5 rounded-full uppercase mb-1.5 tracking-[0.1em] transition-colors duration-300`}>
+              {room.players[1] === room.kickerId ? 'Skyder' : 'Målmand'}
+            </span>
+            <div className={`w-14 h-14 ${room.players[1] === room.kickerId ? 'bg-emerald-500 border-emerald-700 shadow-emerald-200/50' : 'bg-amber-400 border-amber-600 shadow-amber-200/50'} rounded-2xl flex items-center justify-center text-2xl font-black text-white shadow-xl border-b-4 transition-colors duration-300 relative`}>
               {room.playerNames[room.players[1]]?.substring(0, 2).toUpperCase() || 'P2'}
+              <div className="absolute -top-1 -right-1 bg-white rounded-full w-6 h-6 flex items-center justify-center shadow-md border border-zinc-100 text-xs">
+                {room.players[1] === room.kickerId ? '⚽' : '🧤'}
+              </div>
             </div>
             <span className="text-[10px] font-black mt-2 text-zinc-400 uppercase tracking-widest truncate max-w-full">
               {room.playerNames[room.players[1]]}
             </span>
+            <div className="flex items-center mt-1 space-x-1">
+               <span className="text-[8px] font-bold text-rose-500/60 uppercase">Miss:</span>
+               <span className="text-[10px] font-black text-rose-500">{getMissedShots(room.players[1])}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Shot History Indicators */}
+        <div className="w-full max-w-md mt-4 px-4 flex justify-between items-center bg-white/10 backdrop-blur-sm rounded-2xl py-3 border border-white/5">
+          <div className="flex space-x-1.5">
+            {[0, 1, 2, 3, 4].map((i) => {
+              const p1Shots = (room.history || []).filter(h => h.kickerId === room.players[0]);
+              const result = p1Shots[i];
+              return (
+                <div 
+                  key={i} 
+                  className={`w-3.5 h-3.5 rounded-full border-2 ${
+                    !result ? 'bg-zinc-700/50 border-zinc-600' : 
+                    result.isGoal ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
+                    'bg-rose-500 border-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.5)]'
+                  }`}
+                />
+              );
+            })}
+          </div>
+          
+          <div className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">Skudhistorik</div>
+
+          <div className="flex space-x-1.5">
+            {[0, 1, 2, 3, 4].map((i) => {
+              const p2Shots = (room.history || []).filter(h => h.kickerId === room.players[1]);
+              const result = p2Shots[i];
+              return (
+                <div 
+                  key={i} 
+                  className={`w-3.5 h-3.5 rounded-full border-2 ${
+                    !result ? 'bg-zinc-700/50 border-zinc-600' : 
+                    result.isGoal ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
+                    'bg-rose-500 border-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.5)]'
+                  }`}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
@@ -453,7 +546,7 @@ export default function App() {
           
           {/* Result Indicators in the net */}
           <AnimatePresence>
-            {showResult && lastRoundResult && (
+            {showGoalText && lastRoundResult && (
               <motion.div 
                 initial={{ opacity: 0, scale: 0.5, y: 50 }}
                 animate={{ opacity: 1, scale: 1.2, y: 0 }}
@@ -470,6 +563,15 @@ export default function App() {
         
         {/* Keeper visualization */}
         <div className="absolute top-36 left-1/2 -translate-x-1/2 w-20 h-20 z-20">
+           {!isKicker && !showResult && (
+             <motion.div 
+               initial={{ opacity: 0, y: 10 }}
+               animate={{ opacity: 1, y: 0 }}
+               className="absolute -top-8 left-1/2 -translate-x-1/2 bg-white px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest text-zinc-900 shadow-sm border border-zinc-100 whitespace-nowrap z-30"
+             >
+               Dig (Målmand)
+             </motion.div>
+           )}
            <motion.div
              animate={showResult && lastRoundResult ? {
                x: lastRoundResult.keeperChoice === 'left' ? -90 : lastRoundResult.keeperChoice === 'right' ? 90 : 0,
@@ -487,6 +589,15 @@ export default function App() {
 
         {/* The Ball */}
         <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-20 h-20 z-30">
+          {isKicker && !showResult && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="absolute -top-10 left-1/2 -translate-x-1/2 bg-white px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest text-zinc-900 shadow-xl border border-zinc-100 whitespace-nowrap z-40"
+            >
+              Din tur (Skytte)
+            </motion.div>
+          )}
           <motion.div
             animate={showResult && lastRoundResult ? {
               x: lastRoundResult.kickerChoice === 'left' ? -100 : lastRoundResult.kickerChoice === 'right' ? 100 : 0,
@@ -514,42 +625,47 @@ export default function App() {
       </div>
 
       {/* Controls Container */}
-      <div className="bg-white rounded-t-[48px] p-10 pb-12 shadow-[0_-20px_60px_rgba(0,0,0,0.2)] z-10 relative">
+      <div className="bg-white rounded-t-[48px] p-8 sm:p-10 pb-12 shadow-[0_-20px_60px_rgba(0,0,0,0.2)] z-10 relative mt-auto">
         <div className="flex flex-col items-center">
-          <div className="flex items-center space-x-3 mb-8">
-             <div className="w-3 h-3 rounded-full bg-rose-500 animate-pulse shadow-[0_0_10px_rgba(244,63,94,0.5)]"></div>
-             <span className="text-sm font-black text-zinc-900 tracking-widest uppercase">
-               {isKicker ? 'DIN TUR: SKYD MOD MÅL!' : 'DIN TUR: RED BOLTEN!'}
-             </span>
+          <div className="flex flex-col items-center mb-6 sm:mb-8 text-center">
+             <div className="flex items-center space-x-3 mb-2 justify-center">
+                <div className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div>
+                <span className="text-[10px] sm:text-xs font-black text-zinc-400 tracking-[0.2em] uppercase">
+                  {isKicker ? 'Du er skytten' : 'Du er målmanden'}
+                </span>
+             </div>
+             <h2 className="text-xl sm:text-2xl font-black text-zinc-900 italic tracking-tight uppercase">
+               {isKicker ? 'Hvor vil du skyde?' : 'Hvor vil du kaste dig?'}
+             </h2>
           </div>
           
-          <div className="grid grid-cols-3 gap-6 w-full max-w-md">
+          <div className="grid grid-cols-3 gap-4 sm:gap-6 w-full max-w-md">
             {(['left', 'center', 'right'] as Choice[]).map((choice) => {
               const isActive = myChoice === choice;
               const isOtherActive = myChoice && myChoice !== choice;
-              const isCenter = choice === 'center';
               
               return (
-                <button
+                <motion.button
                   key={choice || 'none'}
+                  whileTap={{ scale: 0.95 }}
                   disabled={!!myChoice || showResult}
                   onClick={() => makeChoice(choice)}
                   className={`
-                    aspect-square rounded-[32px] flex flex-col items-center justify-center transition-all duration-300
+                    aspect-square rounded-[24px] sm:rounded-[32px] flex flex-col items-center justify-center transition-all duration-300
                     ${isActive 
                       ? 'bg-emerald-500 border-b-8 border-emerald-700 shadow-2xl shadow-emerald-200 -translate-y-2' 
-                      : 'bg-zinc-100 border-b-8 border-zinc-200 active:border-b-0 active:translate-y-1 hover:bg-zinc-200'}
+                      : 'bg-zinc-100 border-b-8 border-zinc-200 active:border-b-0 hover:bg-zinc-200'}
                     ${isOtherActive ? 'opacity-30 scale-90' : ''}
                     ${showResult ? 'pointer-events-none' : ''}
                   `}
                 >
-                  <div className={`text-4xl mb-2 filter drop-shadow-sm ${isActive ? 'scale-110' : ''}`}>
+                  <div className={`text-3xl sm:text-4xl mb-2 filter drop-shadow-sm ${isActive ? 'scale-110' : ''}`}>
                     {choice === 'left' ? '↖️' : choice === 'center' ? '⬆️' : '↗️'}
                   </div>
-                  <span className={`text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-white' : 'text-zinc-500'}`}>
+                  <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest ${isActive ? 'text-white' : 'text-zinc-500'}`}>
                     {choice === 'left' ? 'Venstre' : choice === 'center' ? 'Midt' : 'Højre'}
                   </span>
-                </button>
+                </motion.button>
               );
             })}
           </div>

@@ -28,3 +28,4 @@ jobs:
           local-dir: ./dist/
           server-dir: ./straffespark/
           protocol: ftp
+          dangerous-clean-slate: false
